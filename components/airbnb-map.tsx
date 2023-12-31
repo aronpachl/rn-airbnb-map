@@ -1,15 +1,10 @@
 import BottomSheet, { BottomSheetFlatList } from '@gorhom/bottom-sheet';
 import debounce from 'lodash.debounce';
 import { AnimatePresence } from 'moti';
-import React, { useEffect, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { Dimensions, Text, TextStyle, View, ViewStyle } from 'react-native';
 import MapView from 'react-native-maps';
-import Animated, {
-  runOnJS,
-  useAnimatedStyle,
-  useDerivedValue,
-  useSharedValue,
-} from 'react-native-reanimated';
+import { runOnJS, useAnimatedReaction, useSharedValue } from 'react-native-reanimated';
 
 import ApartmentItem from './apartment-item';
 import { Marker } from './marker';
@@ -20,82 +15,77 @@ import { shadow } from '../lib/style/global';
 export const MIN_BOTTOM_SHEET_HEIGHT = 80;
 const INITIAL_CAMERA = {
   center: {
-    latitude: 55.686,
-    longitude: 12.564,
+    latitude: 55.696089943389744,
+    longitude: 12.572405340241287,
   },
   pitch: 0,
   heading: 0,
-  altitude: 550,
+  altitude: 27507,
   zoom: 12,
 };
 
 export function AirbnbMap() {
   const [selected, setSelected] = React.useState<Apartment | null>(null);
   const snapPoints = useMemo(() => [MIN_BOTTOM_SHEET_HEIGHT, '50%', '90%'], []);
-  const screenHeight = useSharedValue(Dimensions.get('window').height);
   const position = useSharedValue(0);
   const mapRef = React.useRef<MapView>(null);
-  const [pos, setPos] = React.useState(0);
 
-  const updatePosition = useMemo(() => debounce((pos) => setPos(pos), 16), []);
+  const updateCameraAltitude = useMemo(
+    () =>
+      debounce((pos) => {
+        if (!mapRef.current) return;
 
-  const animatedHeight = useDerivedValue(() => {
-    const height = screenHeight.value - position.value;
+        const windowHeight = Dimensions.get('window').height;
+        if (pos < windowHeight * 0.4) return;
 
-    runOnJS(updatePosition)(position.value);
-    return height - 32;
-  });
-
-  const animatedHeightStyle = useAnimatedStyle(() => {
-    return {
-      height: animatedHeight.value,
-    };
-  });
-
-  useEffect(() => {
-    const updateMap = () => {
-      if (!mapRef.current || pos === 0) return;
-      const windowHeight = Dimensions.get('window').height;
-
-      if (pos >= windowHeight * 0.9 || pos <= windowHeight * 0.4) return;
-
-      mapRef.current.fitToCoordinates(
-        apartments.map((apartment) => ({
-          latitude: apartment.latitude,
-          longitude: apartment.longitude,
-        })),
-        {
-          animated: true,
+        if (pos > windowHeight * 0.8) {
+          mapRef.current.animateCamera(INITIAL_CAMERA, {
+            duration: 100,
+          });
+          return;
         }
-      );
-    };
 
-    const updateMapDebounced = debounce(updateMap, 50);
+        const currentActualPositionFromBottom = windowHeight - pos;
+        const altitude = Math.round(currentActualPositionFromBottom) * 10;
+        const multiplier = Math.round(altitude / 1000) * 3000;
+        const extraAltitude = altitude + multiplier;
 
-    updateMapDebounced();
+        mapRef.current.animateCamera(
+          {
+            ...INITIAL_CAMERA,
+            center: {
+              ...INITIAL_CAMERA.center,
+              // latitude: INITIAL_CAMERA.center.latitude + pos * 0.0001,
+            },
+            altitude: INITIAL_CAMERA.altitude + extraAltitude,
+          },
+          {
+            duration: 100,
+          }
+        );
+      }, 16),
+    []
+  );
 
-    return () => {
-      updateMapDebounced.cancel();
-    };
-  }, [pos]);
+  useAnimatedReaction(
+    () => position.value,
+    (prepareResult) => {
+      runOnJS(updateCameraAltitude)(prepareResult);
+    }
+  );
 
   return (
     <View style={$screen}>
-      <View style={$mapWrapper}>
-        <MapView ref={mapRef} style={$mapStyle} loadingEnabled initialCamera={INITIAL_CAMERA}>
-          {useMemo(() => {
-            return apartments.map((apartment) => (
-              <Marker
-                isSelected={selected?.id === apartment.id}
-                apartment={apartment}
-                key={apartment.id}
-                onPress={() => setSelected(apartment)}
-              />
-            ));
-          }, [selected])}
-        </MapView>
-        <Animated.View style={[animatedHeightStyle]} />
-      </View>
+      <MapView ref={mapRef} style={$mapStyle} loadingEnabled initialCamera={INITIAL_CAMERA}>
+        {apartments.map((apartment) => (
+          <Marker
+            isSelected={selected?.id === apartment.id}
+            apartment={apartment}
+            key={apartment.id}
+            onPress={() => setSelected(apartment)}
+          />
+        ))}
+      </MapView>
       <AnimatePresence>
         {selected && <SelectedApartment apartment={selected} onClose={() => setSelected(null)} />}
       </AnimatePresence>
@@ -134,15 +124,6 @@ export function AirbnbMap() {
 const $screen: ViewStyle = {
   height: '100%',
   width: '100%',
-};
-
-const $mapWrapper: ViewStyle = {
-  flex: 1,
-  position: 'absolute',
-  top: 0,
-  left: 0,
-  right: 0,
-  bottom: 0,
 };
 
 const $selectedItemTitle: TextStyle = {
